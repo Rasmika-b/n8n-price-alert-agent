@@ -1,0 +1,612 @@
+{
+  "name": "Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -272,
+        -16
+      ],
+      "id": "14beb896-7eba-4335-b8d6-b85757cdf577",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU",
+          "mode": "list",
+          "cachedResultName": "Product Watchlist",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -96,
+        -16
+      ],
+      "id": "bca32d8b-7b04-424a-a5a3-9d9b015ddd60",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "MKMBNsjMZG4QOLFh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        80,
+        -16
+      ],
+      "id": "d50a4741-d1a5-46ef-b2d7-88403a42d15b",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        288,
+        0
+      ],
+      "id": "e9e3a9fd-f7f0-4a4d-b8aa-60cad64019d6",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data;\nconst sheetData = $('Loop Over Items').first().json;\n\nconst priceMatch = html.match(/class=\"price_color\">\\s*([^<]+)/);\n\nlet price = null;\nif (priceMatch) {\n  const raw = priceMatch[1].replace(/[^\\d.]/g, '').trim();\n  price = parseFloat(raw);\n}\n\nreturn [{\n  json: {\n    product_name: sheetData.product_name,\n    url: sheetData.url,\n    target_price: sheetData.target_price,\n    last_price: sheetData.last_price,\n    current_price: price\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        256
+      ],
+      "id": "44ef387d-43b7-4ffd-a3f1-efb1fb05fdaf",
+      "name": "extract price"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nconst currentPrice = parseFloat(item.current_price);\nconst targetPrice = parseFloat(item.target_price);\nconst lastPrice = parseFloat(item.last_price);\n\nconst dropped = currentPrice <= targetPrice;\nconst savings = lastPrice - currentPrice;\nconst pctOff = ((savings / lastPrice) * 100).toFixed(1);\n\nreturn [{ \n  json: { \n    product_name: item.product_name,\n    url: item.url,\n    target_price: targetPrice,\n    current_price: currentPrice,\n    last_price: lastPrice,\n    price_dropped: dropped,\n    savings: savings,\n    pct_off: pctOff\n  } \n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        256
+      ],
+      "id": "00828098-d271-4de3-98ab-4fac1f90b1af",
+      "name": "compare"
+    },
+    {
+      "parameters": {
+        "jsCode": "const gemini = $input.first().json;\nconst item = $('compare').first().json;\nconst analysis = gemini.content?.parts?.[0]?.text || 'No analysis available';\n\nconst html = `\n<html><body style=\"font-family:sans-serif;max-width:600px;margin:auto;color:#222\">\n  <h2 style=\"color:#e63946\">Price Drop Alert!</h2>\n  <h3>${item.product_name}</h3>\n  <p>\n    <s style=\"color:#888\">$${item.last_price}</s>\n    <strong style=\"color:#2a9d8f;font-size:1.4em\"> $${item.current_price}</strong>\n    <span style=\"color:#e63946\"> Save $${item.savings} (${item.pct_off}% off)</span>\n  </p>\n  <h4>AI Deal Analysis</h4>\n  <p style=\"background:#f8f9fa;padding:12px;border-radius:8px\">${analysis}</p>\n  <a href=\"${item.url}\" style=\"background:#2a9d8f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin-top:12px\">\n    View Deal\n  </a>\n</body></html>`;\n\nreturn [{ \n  json: { \n    html, \n    subject: `Price Drop: ${item.product_name} is now $${item.current_price}!`,\n    product_name: item.product_name,\n    url: item.url,\n    current_price: item.current_price,\n    last_price: item.last_price\n  } \n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        48
+      ],
+      "id": "3322ea50-f2a4-4e66-9b51-c9c259742d28",
+      "name": "format email"
+    },
+    {
+      "parameters": {
+        "sendTo": "rb5719@nyu.edu",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1072,
+        48
+      ],
+      "id": "344758f4-b569-4715-932a-14c009a1bf35",
+      "name": "Send a message",
+      "webhookId": "115b7485-c582-4980-9926-be13bf3be4f9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "XqWsDBSDgur0yQR2",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "31cc4cd5-8ce6-4571-8903-035d8a43e3fa",
+              "leftValue": "={{ $json.price_dropped }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        256
+      ],
+      "id": "31b948a0-9095-47bb-b6f7-486b7e54abaa",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a smart shopping assistant. Analyze this price drop and give a buying recommendation.\n\nProduct: {{ $json.product_name }}\nOriginal price: ${{ $json.last_price }}\nCurrent price: ${{ $json.current_price }}\nSavings: ${{ $json.savings }}\nDiscount: {{ $json.pct_off }}% off\nProduct URL: {{ $json.url }}\n\nAnswer these 3 things in short bullet points:\n- Is this a good deal? (Yes/No and why)\n- Best time to buy? (Now or wait)\n- Any caution? (refurbished, limited stock, etc)\n\nKeep it under 5 sentences total."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        864,
+        -192
+      ],
+      "id": "a1ce807e-8203-448d-a3d7-fcb8b1dcb57f",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "NZlKVeubcJgSBjdk",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU",
+          "mode": "list",
+          "cachedResultName": "Product Watchlist",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "last_price": "={{ $('compare').first().json.current_price }}",
+            "last_checked": "={{ $now.toISO() }}",
+            "alert_sent": "Yes",
+            "product_name": "={{ $('compare').first().json.product_name }}"
+          },
+          "matchingColumns": [
+            "product_name"
+          ],
+          "schema": [
+            {
+              "id": "product_name",
+              "displayName": "product_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "target_price",
+              "displayName": "target_price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "last_price",
+              "displayName": "last_price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_checked",
+              "displayName": "last_checked",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "alert_sent",
+              "displayName": "alert_sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1248,
+        48
+      ],
+      "id": "6af3e27d-31f1-4d73-baad-59e3febff0e8",
+      "name": "update sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "MKMBNsjMZG4QOLFh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU",
+          "mode": "list",
+          "cachedResultName": "Product Watchlist",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1_FV0H7bV7i6k4UJujO9NerrMZJwE6PjaFrT4fX158RU/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "last_price": "={{ $json.current_price || $json.last_price }}",
+            "last_checked": "={{ $now.toISO() }}",
+            "alert_sent": "No",
+            "product_name": "={{ $json.product_name }}"
+          },
+          "matchingColumns": [
+            "product_name"
+          ],
+          "schema": [
+            {
+              "id": "product_name",
+              "displayName": "product_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "target_price",
+              "displayName": "target_price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "last_price",
+              "displayName": "last_price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_checked",
+              "displayName": "last_checked",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "alert_sent",
+              "displayName": "alert_sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        896,
+        272
+      ],
+      "id": "ee74d822-9a2c-4be1-ad53-fe14bc2663fa",
+      "name": "update price",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "MKMBNsjMZG4QOLFh",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "extract price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extract price": {
+      "main": [
+        [
+          {
+            "node": "compare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "compare": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "format email": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "update sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "update price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "format email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update sheet": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "update price": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "f6ebf50b-9ed9-4995-abcc-de1490ae69a2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ddfd5ee6ab251a08b4c5ea4663314658112333d04f78959d20225e1cd98b11de"
+  },
+  "id": "OGgXPzO9uKdnj2GY",
+  "tags": []
+}
